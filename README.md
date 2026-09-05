@@ -1,5 +1,10 @@
 # ShotKit
 
+[![CI](https://github.com/birangdev/ShotKit/actions/workflows/ci.yml/badge.svg)](https://github.com/birangdev/ShotKit/actions/workflows/ci.yml)
+[![Swift](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fbirangdev%2FShotKit%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/birangdev/ShotKit)
+[![Platforms](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fbirangdev%2FShotKit%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/birangdev/ShotKit)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A tiny, project-agnostic App Store screenshot engine for SwiftUI apps on macOS
 and iOS.
 

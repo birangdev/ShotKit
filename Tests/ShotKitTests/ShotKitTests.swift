@@ -1,5 +1,8 @@
 import XCTest
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 @testable import ShotKit
 
 final class ShotKitTests: XCTestCase {
@@ -49,6 +52,7 @@ final class ShotKitTests: XCTestCase {
 
     @MainActor
     func testCaptureProducesValidPNG() throws {
+        try XCTSkipIf(NSScreen.main == nil, "No display / window server (headless CI).")
         let spec = ScreenshotSpec("unit", pointSize: CGSize(width: 300, height: 200), scale: 2)
         guard let data = ShotKit.capturePNG(SolidScene(spec: spec)) else {
             throw XCTSkip("No window server available; capture returns nil headless.")
@@ -63,6 +67,7 @@ final class ShotKitTests: XCTestCase {
 
     @MainActor
     func testExportWritesOnePNGPerScene() throws {
+        try XCTSkipIf(NSScreen.main == nil, "No display / window server (headless CI).")
         let folder = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("ShotKitTests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: folder) }
