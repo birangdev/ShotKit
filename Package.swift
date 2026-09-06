@@ -25,12 +25,19 @@ let package = Package(
             name: "CafeExample",
             dependencies: ["ShotKit"],
             path: "Examples/CafeApp",
-            exclude: ["README.md", "ExportTool", "Screenshots"]
+            exclude: ["README.md", "ExportTool", "ComparisonTool", "Screenshots"]
         ),
         .executableTarget(
             name: "CafeExportTool",
             dependencies: ["ShotKit", "CafeExample"],
             path: "Examples/CafeApp/ExportTool"
+        ),
+        // Regenerates the ImageRenderer-vs-ShotKit comparison in the README:
+        // `swift run ComparisonTool Examples/CafeApp/Screenshots`.
+        .executableTarget(
+            name: "ComparisonTool",
+            dependencies: ["ShotKit", "CafeExample"],
+            path: "Examples/CafeApp/ComparisonTool"
         ),
         .testTarget(name: "ShotKitTests", dependencies: ["ShotKit"])
     ]

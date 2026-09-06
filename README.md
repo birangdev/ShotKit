@@ -10,19 +10,25 @@ and iOS.
 
 ShotKit renders your real views into marketing screenshots at exact App Store
 pixel sizes. It captures the **live view hierarchy** from a real window, so
-platform-backed content that `ImageRenderer` cannot rasterize (linear
-`ProgressView`s, segmented `Picker`s, `ScrollView` bodies, Swift `Charts`) comes
-out looking exactly like the running app.
+native controls that `ImageRenderer` replaces with a placeholder (segmented
+`Picker`s, linear `ProgressView`s, `Slider`s, `Toggle`s, and more) come out
+looking exactly like the running app.
+
+![The same SwiftUI view rendered two ways. On the left, ImageRenderer has replaced the segmented picker, the progress bars, the slider, and the toggle with "no-entry" placeholders. On the right, ShotKit's capture keeps every control.](Examples/CafeApp/Screenshots/renderer-comparison.png)
 
 ## Why not `ImageRenderer`?
 
-`ImageRenderer` rasterizes SwiftUI's own drawing but silently drops
-platform-backed views. A segmented picker or a linear progress bar renders as a
-red "no-entry" placeholder, and a `ScrollView`'s contents and `Charts` come out
-blank. ShotKit instead hosts the view in a real window and snapshots the live
-hierarchy (`cacheDisplay` on macOS, `drawHierarchy` on iOS), so what you capture
-is what the user sees, at the screen's backing scale (2x on Retina gives a
-2880x1800 image from a 1440x900 canvas).
+`ImageRenderer` rasterizes SwiftUI's own drawing, but AppKit- and UIKit-backed
+controls aren't part of that drawing. A segmented picker, a linear progress bar,
+a slider, or a toggle each comes out as a "no-entry" placeholder, and a
+`ScrollView`'s content below the fold can be missing. ShotKit instead hosts the
+view in a real window and snapshots the live hierarchy (`cacheDisplay` on macOS,
+`drawHierarchy` on iOS), so what you capture is what the user sees, at the
+screen's backing scale (2x on Retina gives a 2880x1800 image from a 1440x900
+canvas).
+
+The image above is `Examples/CafeApp`'s `ControlsPanel`, captured both ways.
+Regenerate it with `swift run ComparisonTool Examples/CafeApp/Screenshots`.
 
 ## Features
 
@@ -220,9 +226,24 @@ if ProcessInfo.processInfo.environment["EXPORT_SHOTS"] != nil {
 EXPORT_SHOTS=1 path/to/YourApp.app/Contents/MacOS/YourApp
 ```
 
+## Used in production
+
+ShotKit was pulled out of
+[StackGauge](https://apps.apple.com/us/app/stackgauge/id6805932465), a macOS
+menu-bar app, after `ImageRenderer` kept dropping the gauge, toggles, and charts
+from its App Store screenshots. Every image on the StackGauge listing is a
+ShotKit capture of the real app views driven by fixture data. Two of them:
+
+| Menu popover | History window |
+| --- | --- |
+| ![StackGauge menu popover: a circular gauge, a toggle, and a linear progress bar, all captured intact](Examples/StackGauge/limits.png) | ![StackGauge history window: a Swift Charts bar chart and an activity heatmap in a tall window auto-fit to the canvas](Examples/StackGauge/history.png) |
+
+The gauge, the toggle, the progress bar, and the chart are exactly the controls a
+rendered screenshot loses.
+
 ## Example
 
-`Examples/CafeApp` is a self-contained example that captures three screens of
+`Examples/CafeApp` is a self-contained example that captures four screens of
 [CafeApp](https://github.com/Arashk-A/CafeApp), a coffee-ordering app, in the
 order the app navigates them: Home → coffee styles → size → extras. It stands in for the
 app's RealmSwift models and custom artwork with fixture data (`CoffeesMock.json`)
@@ -239,6 +260,10 @@ Regenerate the screenshots:
 ```sh
 swift run CafeExportTool Examples/CafeApp/Screenshots
 ```
+
+`swift run ComparisonTool Examples/CafeApp/Screenshots` regenerates the
+`ImageRenderer` vs ShotKit image near the top of this README from the same
+example module.
 
 The example targets aren't part of the `ShotKit` library product, so they're
 never pulled into an app that depends on ShotKit — they only build when you
@@ -279,6 +304,21 @@ a size the App Store accepts (for example 1440x900 @2x = 2880x1800).
    candidate scales. Each candidate reserves its true scaled size via
    `ScaledLayout`, so the largest one that actually fits is chosen and nothing
    overflows the canvas.
+
+## Roadmap
+
+ShotKit 1.0 covers the workflow it was built for. I'd rather grow it from real
+use than guess, so if one of these would help you, open an issue and say how you'd
+use it:
+
+- **Localization.** Capture the same scenes across languages in one run.
+- **More device frames.** iPad, landscape, older iPhone sizes.
+- **More App Store size presets.** Especially the newer iPad requirements.
+- **Appearance batches.** Light and dark from a single pass.
+- **DocC documentation.**
+
+Contributions are welcome. The example module is a good place to see how the
+pieces fit together.
 
 ## License
 

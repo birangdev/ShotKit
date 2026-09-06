@@ -56,11 +56,12 @@ public enum ShotKit {
     /// the live view hierarchy — not `ImageRenderer`.
     ///
     /// `ImageRenderer` rasterizes SwiftUI's own drawing but drops platform-backed
-    /// content: linear `ProgressView`s, segmented `Picker`s, `ScrollView`
-    /// contents, and `Charts` come out blank or as a "no-entry" placeholder — so
-    /// it can't capture the true UI. Hosting the view in a real window and
-    /// snapshotting it (`cacheDisplay` on macOS, `drawHierarchy` on iOS) renders
-    /// exactly what the user sees, at the screen's backing scale.
+    /// controls: segmented `Picker`s, linear `ProgressView`s, `Slider`s,
+    /// `Toggle`s, and the like come out as a "no-entry" placeholder, and
+    /// `ScrollView` content below the fold can be missing — so it can't capture
+    /// the true UI. Hosting the view in a real window and snapshotting it
+    /// (`cacheDisplay` on macOS, `drawHierarchy` on iOS) renders exactly what the
+    /// user sees, at the screen's backing scale.
     @MainActor
     public static func capturePNG(_ scene: ScreenshotScene) -> Data? {
         let spec = scene.spec

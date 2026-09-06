@@ -37,6 +37,11 @@ ShotCard("Your roast", subtitle: "Three ways to brew", accent: .orange,
 - `CafeScenes.swift` — the `ScreenshotScene` wrappers (`HomeScene`, `StyleScene`,
   `SizeScene`, `ExtrasScene`) that put each screen in a `DeviceFrame` + `ShotCard`,
   at iPhone App Store size, in navigation order.
+- `ControlsPanel.swift` — a panel of platform-backed controls (segmented
+  `Picker`, linear `ProgressView`s, `Slider`, `Toggle`, a `Chart`) used to show
+  what `ImageRenderer` drops.
+- `ComparisonScene.swift` — a side-by-side scene: the same `ControlsPanel`,
+  rasterized by `ImageRenderer` on the left and captured by ShotKit on the right.
 
 ## Try it
 
@@ -44,6 +49,13 @@ Regenerate the screenshots above with the `CafeExportTool` executable target:
 
 ```sh
 swift run CafeExportTool Examples/CafeApp/Screenshots
+```
+
+Regenerate the `ImageRenderer` vs ShotKit comparison in the top-level README with
+`ComparisonTool`:
+
+```sh
+swift run ComparisonTool Examples/CafeApp/Screenshots
 ```
 
 These example targets aren't part of the `ShotKit` library product, so they
