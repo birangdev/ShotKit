@@ -320,6 +320,12 @@ use it:
 Contributions are welcome. The example module is a good place to see how the
 pieces fit together.
 
+## Credits
+
+ShotKit is an open-source project from [Birang Dev](https://mbirang.com). It was
+built for [StackGauge](https://apps.apple.com/us/app/stackgauge/id6805932465) and
+generates its App Store screenshots.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
