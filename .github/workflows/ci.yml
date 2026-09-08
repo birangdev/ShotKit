@@ -21,3 +21,8 @@ jobs:
         run: swift build
       - name: Test
         run: swift test
+      - name: Build (iOS)
+        # The whole-package scheme must compile for every declared platform, or
+        # Swift Package Index's compatibility build fails at analysis. Catches a
+        # macOS-only API leaking into a shared or example target.
+        run: xcodebuild -scheme ShotKit-Package -destination 'generic/platform=iOS' -skipMacroValidation -skipPackagePluginValidation build
