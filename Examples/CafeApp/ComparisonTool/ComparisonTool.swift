@@ -1,13 +1,17 @@
-import AppKit
-import CafeExample
-import ShotKit
-import SwiftUI
-
 // Renders `ControlsPanel` with SwiftUI's `ImageRenderer`, then lets ShotKit
 // compose the finished ImageRenderer-vs-ShotKit comparison and writes it as
 // `renderer-comparison.png` into the folder passed as the first argument.
 //
 //   swift run ComparisonTool Examples/CafeApp/Screenshots
+//
+// Guarded to macOS: it uses `NSApplication` and `ImageRenderer.nsImage`, and is
+// only run on a Mac. The stub keeps the whole package compiling on iOS/Linux
+// (e.g. the Swift Package Index compatibility build).
+#if os(macOS)
+import AppKit
+import CafeExample
+import ShotKit
+import SwiftUI
 
 @main
 struct ComparisonTool {
@@ -41,3 +45,11 @@ struct ComparisonTool {
         print(url.path)
     }
 }
+#else
+@main
+struct ComparisonTool {
+    static func main() {
+        print("ComparisonTool runs on macOS only.")
+    }
+}
+#endif

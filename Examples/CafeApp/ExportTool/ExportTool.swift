@@ -1,3 +1,8 @@
+// This tool drives macOS-only APIs (`NSApplication`, ShotKit's `cacheDisplay`
+// capture) and is only ever run on a Mac. It's guarded so the whole package
+// still compiles on iOS/Linux — e.g. the Swift Package Index compatibility
+// build, which builds every target for every declared platform.
+#if os(macOS)
 import AppKit
 import CafeExample
 import ShotKit
@@ -18,3 +23,11 @@ struct ExportTool {
         for url in urls { print(url.path) }
     }
 }
+#else
+@main
+struct ExportTool {
+    static func main() {
+        print("CafeExportTool runs on macOS only.")
+    }
+}
+#endif
