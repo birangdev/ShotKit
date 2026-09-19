@@ -212,8 +212,23 @@ public struct ScaledContent<Content: View>: View {
 
 // MARK: - Composition helpers (headline + background + framed content)
 
+/// Which edge the caption sits on, relative to the framed content.
+///
+/// `.top` and `.bottom` stack vertically with centered text, the classic App
+/// Store hero. `.leading` and `.trailing` place the caption beside the content
+/// with left-aligned text, which leaves room for a feature list or supporting
+/// detail next to the screenshot.
+public enum CaptionPlacement: Sendable {
+    case top
+    case bottom
+    case leading
+    case trailing
+
+    var isHorizontal: Bool { self == .leading || self == .trailing }
+}
+
 /// A marketing "card": gradient background, an optional big headline, and the
-/// app view centered on it with a rounded window frame and shadow.
+/// app view arranged with it, framed with a rounded window border and shadow.
 ///
 /// Pass `title: nil` (and `subtitle: nil`) to omit the caption entirely — you
 /// still get the framed, auto-fit shot, just without any text over it.
@@ -223,7 +238,7 @@ public struct ScaledContent<Content: View>: View {
 /// size (see `ScaledContent`) actually fits. That keeps a compact view large and
 /// prominent while a much taller window shrinks just enough to be captured
 /// whole — no per-scene tuning, and nothing clips.
-public struct ShotCard<Background: View, Content: View>: View {
+public struct ShotCard<Background: View, Detail: View, Content: View>: View {
     public let title: String?
     public let subtitle: String?
     public let accent: Color
@@ -231,6 +246,11 @@ public struct ShotCard<Background: View, Content: View>: View {
     /// shadow (right for a Mac window). Set false when the content supplies its
     /// own shape — e.g. a `DeviceFrame` iPhone mockup — so it isn't double-framed.
     public let framed: Bool
+    /// Which edge the caption occupies. Defaults to `.top`.
+    public let placement: CaptionPlacement
+    /// Extra detail rendered under the subtitle. Most useful with a side
+    /// placement, where there is room for a feature list.
+    @ViewBuilder public let detail: () -> Detail
     @ViewBuilder public let background: () -> Background
     @ViewBuilder public let content: () -> Content
 
@@ -239,14 +259,18 @@ public struct ShotCard<Background: View, Content: View>: View {
         subtitle: String? = nil,
         accent: Color = .green,
         framed: Bool = true,
+        placement: CaptionPlacement = .top,
         @ViewBuilder background: @escaping () -> Background,
+        @ViewBuilder detail: @escaping () -> Detail,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
         self.subtitle = subtitle
         self.accent = accent
         self.framed = framed
+        self.placement = placement
         self.background = background
+        self.detail = detail
         self.content = content
     }
 
@@ -258,53 +282,72 @@ public struct ShotCard<Background: View, Content: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             // Candidate scales, largest first. `ViewThatFits` renders the first
-            // whose (accurately reserved) size fits vertically. A compact view
-            // lands near the top of the range; tall windows drop to a smaller
-            // step automatically. Listed explicitly rather than via `ForEach` so
-            // each is treated as its own fit candidate.
-            ViewThatFits(in: .vertical) {
-                column(scale: 1.3)
-                column(scale: 1.15)
-                column(scale: 1.0)
-                column(scale: 0.9)
-                column(scale: 0.8)
-                column(scale: 0.72)
-                column(scale: 0.64)
-                column(scale: 0.56)
-                column(scale: 0.48)
-                column(scale: 0.4)
+            // whose (accurately reserved) size fits. A compact view lands near
+            // the top of the range; tall windows drop to a smaller step
+            // automatically. Listed explicitly rather than via `ForEach` so each
+            // is treated as its own fit candidate.
+            //
+            // Side placements must fit horizontally too, since the caption and
+            // the content compete for width; stacked ones only ever run out of
+            // height.
+            ViewThatFits(in: placement.isHorizontal ? [.horizontal, .vertical] : .vertical) {
+                arrangement(scale: 1.3)
+                arrangement(scale: 1.15)
+                arrangement(scale: 1.0)
+                arrangement(scale: 0.9)
+                arrangement(scale: 0.8)
+                arrangement(scale: 0.72)
+                arrangement(scale: 0.64)
+                arrangement(scale: 0.56)
+                arrangement(scale: 0.48)
+                arrangement(scale: 0.4)
             }
         }
     }
 
-    private func column(scale: CGFloat) -> some View {
+    @ViewBuilder
+    private func arrangement(scale: CGFloat) -> some View {
         ScaledContent(scale: scale) {
-            VStack(spacing: 44) {
-                if hasCaption {
-                    VStack(spacing: 12) {
-                        if let title {
-                            Text(title)
-                                .font(.system(size: 54, weight: .bold, design: .rounded))
-                                .multilineTextAlignment(.center)
-                                .foregroundStyle(.white)
-                        }
-                        if let subtitle {
-                            Text(subtitle)
-                                .font(.system(size: 25, weight: .regular))
-                                .foregroundStyle(.white.opacity(0.65))
-                                .multilineTextAlignment(.center)
-                        }
-                    }
-                    .frame(maxWidth: 1180)
-                    .padding(.horizontal, 60)
-                }
-
-                framedContent
+            switch placement {
+            case .top:
+                VStack(spacing: 44) { captionBlock; framedContent }
+            case .bottom:
+                VStack(spacing: 44) { framedContent; captionBlock }
+            case .leading:
+                HStack(alignment: .center, spacing: 64) { captionBlock; framedContent }
+            case .trailing:
+                HStack(alignment: .center, spacing: 64) { framedContent; captionBlock }
             }
         }
-        // Constant margin (outside the scale) so the fitted column always keeps
-        // breathing room against the canvas edges.
+        // Constant margin (outside the scale) so the fitted arrangement always
+        // keeps breathing room against the canvas edges.
         .padding(56)
+    }
+
+    @ViewBuilder private var captionBlock: some View {
+        if hasCaption || Detail.self != EmptyView.self {
+            VStack(alignment: placement.isHorizontal ? .leading : .center, spacing: 12) {
+                if let title {
+                    Text(title)
+                        .font(.system(size: 54, weight: .bold, design: .rounded))
+                        .multilineTextAlignment(placement.isHorizontal ? .leading : .center)
+                        .foregroundStyle(.white)
+                }
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 25, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.65))
+                        .multilineTextAlignment(placement.isHorizontal ? .leading : .center)
+                }
+                detail()
+                    .padding(.top, hasCaption ? 12 : 0)
+            }
+            // Beside the content a caption needs a hard ceiling or it steals the
+            // width the screenshot needs; stacked above it can run wider.
+            .frame(maxWidth: placement.isHorizontal ? 560 : 1180,
+                   alignment: placement.isHorizontal ? .leading : .center)
+            .padding(.horizontal, placement.isHorizontal ? 0 : 60)
+        }
     }
 
     @ViewBuilder private var framedContent: some View {
@@ -335,15 +378,15 @@ public struct ShotCardDefaultBackground: View {
     }
 }
 
-public extension ShotCard where Background == ShotCardDefaultBackground {
-    /// Convenience initializer that uses the default dark gradient background, so
-    /// `ShotCard("Title") { view }` and `ShotCard { view }` work without passing
-    /// a `background:`.
+public extension ShotCard where Background == ShotCardDefaultBackground, Detail == EmptyView {
+    /// The common case: default dark gradient, no extra detail. Keeps
+    /// `ShotCard("Title") { view }` and `ShotCard { view }` working.
     init(
         _ title: String? = nil,
         subtitle: String? = nil,
         accent: Color = .green,
         framed: Bool = true,
+        placement: CaptionPlacement = .top,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.init(
@@ -351,7 +394,57 @@ public extension ShotCard where Background == ShotCardDefaultBackground {
             subtitle: subtitle,
             accent: accent,
             framed: framed,
+            placement: placement,
             background: { ShotCardDefaultBackground() },
+            detail: { EmptyView() },
+            content: content
+        )
+    }
+}
+
+public extension ShotCard where Detail == EmptyView {
+    /// Custom background, no extra detail.
+    init(
+        _ title: String? = nil,
+        subtitle: String? = nil,
+        accent: Color = .green,
+        framed: Bool = true,
+        placement: CaptionPlacement = .top,
+        @ViewBuilder background: @escaping () -> Background,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.init(
+            title,
+            subtitle: subtitle,
+            accent: accent,
+            framed: framed,
+            placement: placement,
+            background: background,
+            detail: { EmptyView() },
+            content: content
+        )
+    }
+}
+
+public extension ShotCard where Background == ShotCardDefaultBackground {
+    /// Default background with supporting detail beside or beneath the caption.
+    init(
+        _ title: String? = nil,
+        subtitle: String? = nil,
+        accent: Color = .green,
+        framed: Bool = true,
+        placement: CaptionPlacement = .top,
+        @ViewBuilder detail: @escaping () -> Detail,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.init(
+            title,
+            subtitle: subtitle,
+            accent: accent,
+            framed: framed,
+            placement: placement,
+            background: { ShotCardDefaultBackground() },
+            detail: detail,
             content: content
         )
     }

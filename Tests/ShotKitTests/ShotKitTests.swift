@@ -86,4 +86,74 @@ final class ShotKitTests: XCTestCase {
             XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
         }
     }
+
+    // MARK: - 1.1 composition
+
+    func testCaptionPlacementKnowsItsAxis() {
+        XCTAssertFalse(CaptionPlacement.top.isHorizontal)
+        XCTAssertFalse(CaptionPlacement.bottom.isHorizontal)
+        XCTAssertTrue(CaptionPlacement.leading.isHorizontal)
+        XCTAssertTrue(CaptionPlacement.trailing.isHorizontal)
+    }
+
+    func testHighlightStyleDefaults() {
+        let style = HighlightStyle.default
+        XCTAssertEqual(style.lineWidth, 3)
+        XCTAssertEqual(style.notePlacement, .outside)
+        // A highlight is a hint, not a spotlight: the fill must stay subtle or
+        // it obscures the control it is pointing at.
+        XCTAssertLessThan(style.fillOpacity, 0.2)
+    }
+
+    /// Captions on a side must still render, since that path uses a different
+    /// arrangement and fit axis from the stacked one.
+    @MainActor
+    func testSideCaptionCaptures() throws {
+        try XCTSkipIf(NSScreen.main == nil, "No display / window server (headless CI).")
+        let spec = ScreenshotSpec("side", pointSize: CGSize(width: 800, height: 400), scale: 1)
+        let scene = InlineScene(spec: spec) {
+            AnyView(
+                ShotCard("Title", subtitle: "Subtitle", placement: .trailing) {
+                    Color.blue.frame(width: 200, height: 140)
+                }
+            )
+        }
+        let data = try XCTUnwrap(ShotKit.capturePNG(scene), "capture returned nil")
+        XCTAssertNotNil(NSImage(data: data)?.representations.first)
+    }
+
+    @MainActor
+    func testWindowChromeAndMenuBarFrameCapture() throws {
+        try XCTSkipIf(NSScreen.main == nil, "No display / window server (headless CI).")
+        let spec = ScreenshotSpec("frames", pointSize: CGSize(width: 900, height: 600), scale: 1)
+        let scene = InlineScene(spec: spec) {
+            AnyView(
+                ShotCard(framed: false) {
+                    VStack(spacing: 24) {
+                        WindowChrome(title: "Window") {
+                            Color.gray.frame(width: 320, height: 120)
+                        }
+                        MenuBarFrame(statusText: "78%") {
+                            Color.gray.frame(width: 300, height: 120)
+                        }
+                    }
+                }
+            )
+        }
+        let data = try XCTUnwrap(ShotKit.capturePNG(scene), "capture returned nil")
+        XCTAssertNotNil(NSImage(data: data)?.representations.first)
+    }
+}
+
+/// A scene built from a closure, so tests can compose one inline.
+private struct InlineScene: ScreenshotScene {
+    let spec: ScreenshotSpec
+    let make: @MainActor () -> AnyView
+
+    init(spec: ScreenshotSpec, make: @escaping @MainActor () -> AnyView) {
+        self.spec = spec
+        self.make = make
+    }
+
+    @MainActor func makeContent() -> AnyView { make() }
 }

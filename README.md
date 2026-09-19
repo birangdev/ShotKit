@@ -39,6 +39,16 @@ Regenerate it with `swift run ComparisonTool Examples/CafeApp/Screenshots`.
   enough to be captured whole. Nothing clips, with no per-screenshot tuning.
 - **Optional captions.** Pass `title: nil` to `ShotCard` to capture the framed
   shot without any headline/subtitle text, just the view.
+- **Caption on any edge.** `placement:` puts the headline above, below, or
+  beside the content. A side placement leaves room for a feature list via the
+  `detail:` slot, which is the usual two-column marketing layout.
+- **macOS window chrome.** `WindowChrome` adds a title bar and traffic lights,
+  so a captured Settings or History window reads as a window.
+- **Menu-bar framing.** `MenuBarFrame` hangs a popover from a menu bar with the
+  app's own status item highlighted, which is the only way a menu-bar app's UI
+  reads as a menu-bar app rather than a floating panel.
+- **Highlights.** `.shotHighlight("Note")` rings one control and annotates it
+  without moving anything around it.
 - **iPhone device frames.** Wrap iOS screens in `DeviceFrame` for a real notch,
   status bar, and bezel, so shots read as phone screenshots, not flat images.
 - **Customizable background.** `ShotCard` defaults to a dark gradient, but
@@ -62,7 +72,7 @@ Swift Package Manager. Add it to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/birangdev/ShotKit.git", from: "1.0.0")
+    .package(url: "https://github.com/birangdev/ShotKit.git", from: "1.1.0")
 ]
 ```
 
@@ -180,6 +190,50 @@ DeviceFrame(
 ) { screen }
 ```
 
+### Caption beside the content
+
+For a two-column layout, move the caption to a side and use `detail:` for
+supporting points. Side placements are fitted horizontally as well as
+vertically, since the caption and content compete for width:
+
+```swift
+ShotCard(
+    "Know what sells",
+    subtitle: "Every order, counted as it happens.",
+    framed: false,
+    placement: .trailing,
+    detail: { FeatureList(features) }
+) {
+    WindowChrome(title: "CafeApp — Orders") { OrdersView() }
+}
+```
+
+### Framing a menu-bar app
+
+A popover captured on its own is just a rounded rectangle. `MenuBarFrame`
+supplies the context, measuring the status item so the popover hangs beneath
+it rather than from the bar's corner:
+
+```swift
+ShotCard("Always one click away", framed: false) {
+    MenuBarFrame(statusText: "78%") {
+        MenuBarView(model: .demo)
+    }
+}
+```
+
+### Pointing at one control
+
+```swift
+SettingsRow()
+    .shotHighlight("Switch providers here", edge: .trailing)
+```
+
+The ring and note are overlays, so nothing shifts. Inside a container that
+clips — a window frame, a scroll view — pass
+`style: HighlightStyle(notePlacement: .inside)` so the note is not cut off at
+the container's edge.
+
 ### Custom background
 
 `ShotCard` defaults to a dark gradient, but takes any `View` as its
@@ -280,6 +334,10 @@ build this repo. See `Examples/CafeApp/README.md` for details.
 | `ShotKit.export(_:to:)` | Captures many scenes and writes PNGs into a folder. |
 | `ShotCard` | Marketing card: customizable background (dark gradient by default), optional headline/subtitle, auto-fit. `framed: false` drops the Mac-window border for content with its own shape. |
 | `DeviceFrame` | iPhone mockup (notch or Dynamic Island, status bar, side buttons) wrapping your screen content. Pair with `ShotCard(framed: false)`. |
+| `WindowChrome` | macOS window frame: title bar, traffic lights, optional title. Pair with `ShotCard(framed: false)`. |
+| `MenuBarFrame` | A menu bar with neighbouring glyphs, a highlighted status item, and the popover hanging beneath it. |
+| `CaptionPlacement` | `.top`, `.bottom`, `.leading`, `.trailing` — which edge `ShotCard`'s caption occupies. |
+| `.shotHighlight(_:edge:style:)` | Rings a view and adds a note, in an overlay so surrounding layout is untouched. |
 | `ScaledContent` / `ScaledLayout` | Scale a view while reserving its scaled size in layout (used by `ShotCard`; reusable). |
 
 ### `ScreenshotSpec`

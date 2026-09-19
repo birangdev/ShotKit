@@ -77,5 +77,10 @@ struct ExtrasScene: ScreenshotScene {
 
 public enum CafeExampleScenes {
     /// All scenes, in navigation order, ready to pass to `ShotKit.export`.
-    public static let all: [ScreenshotScene] = [HomeScene(), StyleScene(), SizeScene(), ExtrasScene()]
+    public static let all: [ScreenshotScene] = [
+        HomeScene(), StyleScene(), SizeScene(), ExtrasScene(),
+        // 1.1 composition: side caption + window chrome + highlight, and the
+        // menu-bar treatment.
+        FeatureScene(), MenuBarScene()
+    ]
 }
