@@ -195,6 +195,12 @@ final class NativeWindowCaptureTests: XCTestCase {
     /// one `.automatic` resolves to at runtime, callers get the same bitmap.
     @MainActor
     func testCompositedSplitViewContainsBothColumnsAtRequestedScale() async throws {
+        // The capture API itself needs macOS 14, so on 13 there is nothing to
+        // assert. This is unrelated to the old permission gate: both paths run
+        // without a Screen Recording grant wherever the API exists.
+        guard #available(macOS 14.0, *) else {
+            throw XCTSkip("ShotKit.captureWindow requires macOS 14")
+        }
         try requireDisplay()
         try await assertCaptureContainsBothColumns(method: .windowServer)
 
@@ -205,6 +211,7 @@ final class NativeWindowCaptureTests: XCTestCase {
         }
     }
 
+    @available(macOS 14.0, *)
     @MainActor
     private func assertCaptureContainsBothColumns(
         method: NativeWindowCaptureMethod,
