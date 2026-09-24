@@ -4,11 +4,17 @@
 | --- | --- | --- | --- |
 | ![Home](Screenshots/01-home.png) | ![Coffee styles](Screenshots/02-coffees.png) | ![Size](Screenshots/03-size.png) | ![Extras](Screenshots/04-extras.png) |
 
-Four `ScreenshotScene`s modeled on real screens from
+Four iPhone `ScreenshotScene`s modeled on real screens from
 [CafeApp](https://github.com/Arashk-A/CafeApp), a SwiftUI coffee-ordering app,
 in the order the app navigates them: the Home "tap to start" screen, the
 coffee-style picker (`CoffeesView`), the size picker (`CoffeeSizeView`), and the
 extras picker (`ExtrasView`).
+
+Three desktop compositions follow, covering the pieces the phone shots do not:
+
+| Callout | Menu bar on a desktop | Highlight + detail |
+| --- | --- | --- |
+| ![Callout](Screenshots/05-features.png) | ![Menu bar](Screenshots/06-menubar.png) | ![Highlight and detail](Screenshots/07-selection.png) |
 
 CafeApp's real screens use `RealmSwift` models and custom cup artwork. To keep
 this example dependency-free, `CafeMockData.swift` copies the app's own
@@ -42,6 +48,11 @@ ShotCard("Your roast", subtitle: "Three ways to brew", accent: .orange,
   what `ImageRenderer` drops.
 - `ComparisonScene.swift` — a side-by-side scene: the same `ControlsPanel`,
   rasterized by `ImageRenderer` on the left and captured by ShotKit on the right.
+- `FeatureScene.swift` — the desktop compositions. `FeatureScene` calls out one
+  row from outside `WindowChrome`'s clip, `MenuBarScene` hangs a popover from a
+  `MenuBarFrame` inside a `DesktopFrame`, and `DrinkDetailScene` rings a row with
+  `.shotHighlight` and explains it from a panel beside the window, the two tied
+  together by a shared accent colour rather than by a leader line.
 
 ## Try it
 

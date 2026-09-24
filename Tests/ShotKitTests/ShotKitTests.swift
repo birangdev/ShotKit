@@ -1,8 +1,11 @@
+// macOS-only: these snapshot a real `NSWindow` through AppKit, so the whole
+// file is gated rather than each use. Without this the test target does not
+// build for iOS at all, which silently left the iOS side of the package
+// untested — see `AnnotationRenderingTests` for the cross-platform cover.
+#if os(macOS)
 import XCTest
 import SwiftUI
-#if canImport(AppKit)
 import AppKit
-#endif
 @testable import ShotKit
 
 final class ShotKitTests: XCTestCase {
@@ -105,6 +108,101 @@ final class ShotKitTests: XCTestCase {
         XCTAssertLessThan(style.fillOpacity, 0.2)
     }
 
+    /// The whole point of `.contained`: a ring on a view that reaches its
+    /// container's edge must not draw outside that view's bounds, or the
+    /// container clips it and the highlight reads as a rendering fault.
+    func testContainedRingStaysWithinBounds() {
+        let contained = HighlightStyle(lineWidth: 4, inset: 5, fit: .contained)
+        // Positive padding shrinks the ring inward; the extra half stroke is
+        // what keeps the drawn line itself inside too.
+        XCTAssertEqual(contained.ringPadding, 7)
+        XCTAssertGreaterThan(contained.ringPadding, 0)
+
+        let surrounding = HighlightStyle(lineWidth: 4, inset: 5, fit: .surrounding)
+        XCTAssertEqual(surrounding.ringPadding, -5)
+
+        XCTAssertEqual(HighlightStyle.withinBounds.fit, .contained)
+        XCTAssertEqual(HighlightStyle.withinBounds.notePlacement, .inside)
+    }
+
+    /// A callout's note is placed from its own fixed width, so the style's
+    /// width cap has to be the width the note actually takes.
+    func testCalloutStyleDefaults() {
+        let style = ShotCalloutStyle.default
+        XCTAssertGreaterThan(style.noteMaxWidth, 0)
+        XCTAssertGreaterThan(style.ringInset, 0)
+
+        let callout = ShotCallout("pin", "Pin a provider", detail: "Keeps it in the menu bar.")
+        XCTAssertEqual(callout.id, "pin")
+        XCTAssertEqual(callout.side, .trailing)
+        XCTAssertNil(callout.color)
+    }
+
+    /// Marked targets must publish their frames, and a target with no matching
+    /// callout must simply be ignored rather than drawing a stray ring.
+    func testCalloutAnchorKeyMergesTargetsAndKeepsLatest() {
+        var value = ShotCalloutAnchorKey.defaultValue
+        XCTAssertTrue(value.isEmpty)
+
+        let view = AnyView(
+            VStack {
+                Color.red.frame(width: 30, height: 30).shotCalloutTarget("icon")
+                Color.blue.frame(width: 40, height: 40).shotCalloutTarget("other")
+            }
+            .shotCallouts([ShotCallout("icon", "Only this one", shape: .circle)])
+        )
+        XCTAssertNotNil(view)
+
+        // Reduction keeps the newest frame for an id, so a target that moves
+        // does not leave the ring behind at its old position.
+        ShotCalloutAnchorKey.reduce(value: &value) { [:] }
+        XCTAssertTrue(value.isEmpty)
+    }
+
+    /// A callout must survive an actual capture, not just compile: the layer
+    /// draws through a Shape and an overlay, both of which can silently produce
+    /// nothing if the coordinate space collapses.
+    @MainActor
+    func testCalloutCaptures() throws {
+        try XCTSkipIf(NSScreen.main == nil, "No display / window server (headless CI).")
+        let spec = ScreenshotSpec("callout", pointSize: CGSize(width: 600, height: 400), scale: 1)
+        let scene = InlineScene(spec: spec) {
+            AnyView(
+                ShotCard("Annotated", framed: false) {
+                    VStack(spacing: 10) {
+                        Circle()
+                            .fill(.orange)
+                            .frame(width: 30, height: 30)
+                            .shotCalloutTarget("dot")
+                        Text("Row")
+                    }
+                    .padding(40)
+                    .background(.black)
+                    .shotCallouts([
+                        ShotCallout("dot", "A dot", side: .bottom, shape: .circle)
+                    ])
+                }
+            )
+        }
+        let data = try XCTUnwrap(ShotKit.capturePNG(scene), "capture returned nil")
+        let rep = try XCTUnwrap(NSBitmapImageRep(data: data))
+
+        // Asserting the capture is merely non-nil would pass even when the
+        // callout drew nothing. The ring, leader, and note are the only yellow
+        // in this scene, so counting yellow pixels is what actually proves the
+        // annotation landed on the canvas rather than collapsing to a point.
+        var yellow = 0
+        for y in stride(from: 0, to: rep.pixelsHigh, by: 4) {
+            for x in stride(from: 0, to: rep.pixelsWide, by: 4) {
+                guard let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                if color.redComponent > 0.7, color.greenComponent > 0.7, color.blueComponent < 0.4 {
+                    yellow += 1
+                }
+            }
+        }
+        XCTAssertGreaterThan(yellow, 50, "The callout must actually be drawn")
+    }
+
     /// Captions on a side must still render, since that path uses a different
     /// arrangement and fit axis from the stacked one.
     @MainActor
@@ -157,3 +255,4 @@ private struct InlineScene: ScreenshotScene {
 
     @MainActor func makeContent() -> AnyView { make() }
 }
+#endif

@@ -81,6 +81,6 @@ public enum CafeExampleScenes {
         HomeScene(), StyleScene(), SizeScene(), ExtrasScene(),
         // 1.1 composition: side caption + window chrome + highlight, and the
         // menu-bar treatment.
-        FeatureScene(), MenuBarScene()
+        FeatureScene(), MenuBarScene(), DrinkDetailScene()
     ]
 }

@@ -39,6 +39,11 @@ let package = Package(
             dependencies: ["ShotKit", "CafeExample"],
             path: "Examples/CafeApp/ComparisonTool"
         ),
+        .executableTarget(
+            name: "NativeWindowExportTool",
+            dependencies: ["ShotKit"],
+            path: "Examples/NativeWindowExportTool"
+        ),
         .testTarget(name: "ShotKitTests", dependencies: ["ShotKit"])
     ]
 )

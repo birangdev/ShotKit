@@ -45,6 +45,29 @@ public enum AppStoreSize {
     public static let iPad13 = CGSize(width: 1024, height: 1366)       // x2 = 2048x2732 (12.9"/13")
 }
 
+/// How a scene is turned into pixels.
+///
+/// The difference matters for anything the WindowServer composites rather than
+/// the view drawing itself: `NavigationSplitView` sidebars, sheets, translucent
+/// toolbars. Those are invisible to a view-hierarchy snapshot, which is why
+/// they come out blank.
+public enum CaptureMethod: Sendable {
+    /// Snapshot the view's own drawing (`cacheDisplay`). No permissions, but
+    /// materials and vibrancy capture as blank.
+    case viewHierarchy
+
+    /// Ask the WindowServer for the composited window, exactly as it appears on
+    /// screen. Captures materials correctly.
+    ///
+    /// Needs no Screen Recording permission: a process capturing its own windows
+    /// is not a privacy boundary, and this only ever captures the window ShotKit
+    /// just created. (ScreenCaptureKit is gated even for a caller's own windows,
+    /// which is why `NativeWindowCaptureMethod.automatic` falls back to this.)
+    /// Still opt-in, because the view-hierarchy path is cheaper and sufficient
+    /// for anything that is not a material.
+    case windowServer
+}
+
 /// A unit of work: a caption + a view, rendered at a spec.
 public protocol ScreenshotScene {
     var spec: ScreenshotSpec { get }
@@ -63,25 +86,32 @@ public enum ShotKit {
     /// (`cacheDisplay` on macOS, `drawHierarchy` on iOS) renders exactly what the
     /// user sees, at the screen's backing scale.
     @MainActor
-    public static func capturePNG(_ scene: ScreenshotScene) -> Data? {
+    public static func capturePNG(
+        _ scene: ScreenshotScene,
+        using method: CaptureMethod = .viewHierarchy
+    ) -> Data? {
         let spec = scene.spec
         let content = AnyView(
             scene.makeContent()
                 .frame(width: spec.pointSize.width, height: spec.pointSize.height)
                 .environment(\.colorScheme, .dark)
         )
-        return rasterize(content, spec: spec)
+        return rasterize(content, spec: spec, method: method)
     }
 
     /// Captures every scene and writes `<name>.png` into `folder`. Returns the
     /// URLs written. Creates the folder if needed.
     @MainActor
     @discardableResult
-    public static func export(_ scenes: [ScreenshotScene], to folder: URL) -> [URL] {
+    public static func export(
+        _ scenes: [ScreenshotScene],
+        to folder: URL,
+        using method: CaptureMethod = .viewHierarchy
+    ) -> [URL] {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         var written: [URL] = []
         for scene in scenes {
-            guard let data = capturePNG(scene) else { continue }
+            guard let data = capturePNG(scene, using: method) else { continue }
             let url = folder.appendingPathComponent("\(scene.spec.name).png")
             if (try? data.write(to: url)) != nil { written.append(url) }
         }
@@ -91,11 +121,20 @@ public enum ShotKit {
     #if canImport(AppKit)
     /// macOS: host in a borderless `NSWindow`, then `cacheDisplay` the hierarchy.
     @MainActor
-    private static func rasterize(_ content: AnyView, spec: ScreenshotSpec) -> Data? {
+    private static func rasterize(
+        _ content: AnyView,
+        spec: ScreenshotSpec,
+        method: CaptureMethod = .viewHierarchy
+    ) -> Data? {
         let hosting = NSHostingView(rootView: content)
         hosting.frame = CGRect(origin: .zero, size: spec.pointSize)
 
-        let window = NSWindow(
+        // Borderless, so the capture is exactly the content: a titled window
+        // adds a title-bar band and rounds the corners, both of which end up in
+        // the image. `ActivationAnchor` is what makes an app whose only visible
+        // window is borderless still able to activate.
+        ActivationAnchor.ensure()
+        let window = KeyableWindow(
             contentRect: hosting.frame,
             styleMask: [.borderless],
             backing: .buffered,
@@ -103,10 +142,16 @@ public enum ShotKit {
         )
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = NSColor(calibratedWhite: 0.13, alpha: 1)
         window.contentView = hosting
         // Must be on-screen for SwiftUI/Charts to lay out and draw; a borderless
         // window that we order out immediately after keeps the flash minimal.
         window.orderFrontRegardless()
+        // Key and active, or AppKit draws every control unemphasized: a selected
+        // segment loses its accent fill, a progress bar loses its tint. That is
+        // not what the user sees, so it is not what the shot should show.
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
 
         // Give SwiftUI, Charts, and AppKit controls a few run-loop passes to lay
         // out and render before we snapshot the hierarchy.
@@ -114,17 +159,113 @@ public enum ShotKit {
         hosting.layoutSubtreeIfNeeded()
         hosting.displayIfNeeded()
 
-        let bounds = hosting.bounds
         defer { window.orderOut(nil) }
-        guard let rep = hosting.bitmapImageRepForCachingDisplay(in: bounds) else { return nil }
-        hosting.cacheDisplay(in: bounds, to: rep)
+
+        switch method {
+        case .windowServer:
+            // The composited window, materials included.
+            return compositedPNG(of: window, pixelSize: spec.pixelSize)
+        case .viewHierarchy:
+            let bounds = hosting.bounds
+            guard let rep = hosting.bitmapImageRepForCachingDisplay(in: bounds) else { return nil }
+            hosting.cacheDisplay(in: bounds, to: rep)
+            return rep.representation(using: .png, properties: [:])
+        }
+    }
+
+    /// Keeps the app activatable while only borderless windows are on screen.
+    ///
+    /// macOS will not activate an app whose only window is borderless, and an
+    /// inactive app draws every control in its unemphasized state — a selected
+    /// segment loses its accent fill, a popup its tint. One off-screen titled
+    /// window, created once and left alive, is enough for activation to stick.
+    /// It is never captured: the WindowServer is asked for one window id.
+    @MainActor
+    private enum ActivationAnchor {
+        private static var anchor: NSWindow?
+
+        static func ensure() {
+            if anchor == nil {
+                let window = NSWindow(
+                    contentRect: NSRect(x: -10_000, y: -10_000, width: 1, height: 1),
+                    styleMask: [.titled],
+                    backing: .buffered,
+                    defer: false
+                )
+                window.isReleasedWhenClosed = false
+                window.orderFrontRegardless()
+                anchor = window
+            }
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    /// A borderless window that can still take key.
+    ///
+    /// `NSWindow` refuses key status to a borderless window by default, and an
+    /// unemphasized window renders its controls in the greyed-out state macOS
+    /// uses for background apps.
+    private final class KeyableWindow: NSWindow {
+        override var canBecomeKey: Bool { true }
+        override var canBecomeMain: Bool { true }
+    }
+
+    /// Asks the WindowServer for the window as drawn on screen.
+    ///
+    /// `.boundsIgnoreFraming` excludes the window's shadow from the bounds (not
+    /// the title bar, which a borderless window has none of anyway);
+    /// `.bestResolution` keeps the Retina backing scale.
+    @MainActor
+    private static func compositedPNG(of window: NSWindow, pixelSize: CGSize) -> Data? {
+        let id = CGWindowID(window.windowNumber)
+        guard id != 0 else { return nil }
+
+        // Deprecated in macOS 14 in favour of ScreenCaptureKit, which is async
+        // and needs a capture session. For a synchronous dev-time tool this
+        // stays the pragmatic choice; swap it here if it is ever removed.
+        guard let image = CGWindowListCreateImage(
+            .null,
+            .optionIncludingWindow,
+            id,
+            [.boundsIgnoreFraming, .bestResolution]
+        ) else { return nil }
+
+        // The WindowServer hands back a pixel or two beyond the window's own
+        // bounds, so a 1440x900 window captures as 1442x902 points. The App
+        // Store rejects anything that is not exactly the size it asked for, so
+        // trim back to the spec rather than shipping an off-by-four image.
+        let rep = NSBitmapImageRep(cgImage: cropped(image, to: pixelSize))
         return rep.representation(using: .png, properties: [:])
+    }
+
+    /// Centre-crops to `size`, or returns the image when it already matches.
+    private static func cropped(_ image: CGImage, to size: CGSize) -> CGImage {
+        let width = Int(size.width.rounded())
+        let height = Int(size.height.rounded())
+        guard image.width != width || image.height != height,
+              image.width >= width, image.height >= height else { return image }
+        let origin = CGPoint(
+            x: ((image.width - width) / 2),
+            y: ((image.height - height) / 2)
+        )
+        return image.cropping(
+            to: CGRect(x: origin.x, y: origin.y, width: CGFloat(width), height: CGFloat(height))
+        ) ?? image
     }
     #elseif canImport(UIKit)
     /// iOS: host in a `UIWindow` attached to the active scene, then snapshot the
     /// live hierarchy with `drawHierarchy` at the spec's scale.
+    ///
+    /// `method` is accepted and ignored: `.windowServer` describes a macOS
+    /// compositor that has no iOS equivalent, and `drawHierarchy` already
+    /// captures what is actually on screen. The parameter stays in the signature
+    /// so `capturePNG` has one call shape on every platform.
     @MainActor
-    private static func rasterize(_ content: AnyView, spec: ScreenshotSpec) -> Data? {
+    private static func rasterize(
+        _ content: AnyView,
+        spec: ScreenshotSpec,
+        method: CaptureMethod = .viewHierarchy
+    ) -> Data? {
         let host = UIHostingController(rootView: content)
         host.overrideUserInterfaceStyle = .dark
         host.view.frame = CGRect(origin: .zero, size: spec.pointSize)
@@ -159,7 +300,11 @@ public enum ShotKit {
     }
     #else
     @MainActor
-    private static func rasterize(_ content: AnyView, spec: ScreenshotSpec) -> Data? { nil }
+    private static func rasterize(
+        _ content: AnyView,
+        spec: ScreenshotSpec,
+        method: CaptureMethod = .viewHierarchy
+    ) -> Data? { nil }
     #endif
 }
 
@@ -239,6 +384,12 @@ public enum CaptionPlacement: Sendable {
 /// prominent while a much taller window shrinks just enough to be captured
 /// whole — no per-scene tuning, and nothing clips.
 public struct ShotCard<Background: View, Detail: View, Content: View>: View {
+    /// Small label above the headline, the usual marketing eyebrow. It also
+    /// earns its keep structurally: without it a top-aligned caption sits hard
+    /// against the canvas edge, which reads as unplaced rather than deliberate.
+    public let eyebrow: String?
+    /// SF Symbol shown in a tinted tile beside the eyebrow.
+    public let eyebrowSymbol: String?
     public let title: String?
     public let subtitle: String?
     public let accent: Color
@@ -248,6 +399,11 @@ public struct ShotCard<Background: View, Detail: View, Content: View>: View {
     public let framed: Bool
     /// Which edge the caption occupies. Defaults to `.top`.
     public let placement: CaptionPlacement
+    /// For side placements, how far below the content's top edge the caption
+    /// starts. Flush alignment reads as accidental: a headline's cap-height
+    /// already sits below its bounding box, so a small deliberate inset is what
+    /// makes the column look placed rather than merely aligned.
+    public let captionTopInset: CGFloat
     /// Extra detail rendered under the subtitle. Most useful with a side
     /// placement, where there is room for a feature list.
     @ViewBuilder public let detail: () -> Detail
@@ -257,13 +413,19 @@ public struct ShotCard<Background: View, Detail: View, Content: View>: View {
     public init(
         _ title: String? = nil,
         subtitle: String? = nil,
+        eyebrow: String? = nil,
+        eyebrowSymbol: String? = nil,
         accent: Color = .green,
         framed: Bool = true,
         placement: CaptionPlacement = .top,
+        captionTopInset: CGFloat = 56,
         @ViewBuilder background: @escaping () -> Background,
         @ViewBuilder detail: @escaping () -> Detail,
         @ViewBuilder content: @escaping () -> Content
     ) {
+        self.captionTopInset = captionTopInset
+        self.eyebrow = eyebrow
+        self.eyebrowSymbol = eyebrowSymbol
         self.title = title
         self.subtitle = subtitle
         self.accent = accent
@@ -274,7 +436,7 @@ public struct ShotCard<Background: View, Detail: View, Content: View>: View {
         self.content = content
     }
 
-    private var hasCaption: Bool { title != nil || subtitle != nil }
+    private var hasCaption: Bool { title != nil || subtitle != nil || eyebrow != nil }
 
     public var body: some View {
         ZStack {
@@ -313,10 +475,13 @@ public struct ShotCard<Background: View, Detail: View, Content: View>: View {
                 VStack(spacing: 44) { captionBlock; framedContent }
             case .bottom:
                 VStack(spacing: 44) { framedContent; captionBlock }
+            // Top-aligned: against a tall screenshot a centred caption floats
+            // at mid-height, which reads as unplaced. Anchoring both columns to
+            // the same line is what a two-column marketing layout wants.
             case .leading:
-                HStack(alignment: .center, spacing: 64) { captionBlock; framedContent }
+                HStack(alignment: .top, spacing: 64) { captionBlock; framedContent }
             case .trailing:
-                HStack(alignment: .center, spacing: 64) { framedContent; captionBlock }
+                HStack(alignment: .top, spacing: 64) { framedContent; captionBlock }
             }
         }
         // Constant margin (outside the scale) so the fitted arrangement always
@@ -327,26 +492,52 @@ public struct ShotCard<Background: View, Detail: View, Content: View>: View {
     @ViewBuilder private var captionBlock: some View {
         if hasCaption || Detail.self != EmptyView.self {
             VStack(alignment: placement.isHorizontal ? .leading : .center, spacing: 12) {
+                if let eyebrow {
+                    HStack(spacing: 11) {
+                        if let eyebrowSymbol {
+                            Image(systemName: eyebrowSymbol)
+                                .font(.system(size: 19, weight: .semibold))
+                                .foregroundStyle(accent)
+                                .frame(width: 44, height: 44)
+                                .background(accent.opacity(0.16),
+                                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        Text(eyebrow)
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(accent)
+                    }
+                    .padding(.bottom, 6)
+                }
                 if let title {
                     Text(title)
                         .font(.system(size: 54, weight: .bold, design: .rounded))
                         .multilineTextAlignment(placement.isHorizontal ? .leading : .center)
                         .foregroundStyle(.white)
+                        // Beside the content the caption is width-capped, so a
+                        // long headline must wrap onto another line. Without
+                        // this it truncates instead, since the auto-fit scales
+                        // the arrangement but never reflows text.
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if let subtitle {
                     Text(subtitle)
                         .font(.system(size: 25, weight: .regular))
                         .foregroundStyle(.white.opacity(0.65))
                         .multilineTextAlignment(placement.isHorizontal ? .leading : .center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 detail()
-                    .padding(.top, hasCaption ? 12 : 0)
+                    .padding(.top, hasCaption ? 26 : 0)
             }
             // Beside the content a caption needs a hard ceiling or it steals the
             // width the screenshot needs; stacked above it can run wider.
             .frame(maxWidth: placement.isHorizontal ? 560 : 1180,
                    alignment: placement.isHorizontal ? .leading : .center)
             .padding(.horizontal, placement.isHorizontal ? 0 : 60)
+            // Sits the column below the content's top edge rather than flush
+            // with it. Only meaningful beside the content; a stacked caption
+            // has no edge to align against.
+            .padding(.top, placement.isHorizontal ? captionTopInset : 0)
         }
     }
 
@@ -384,17 +575,23 @@ public extension ShotCard where Background == ShotCardDefaultBackground, Detail 
     init(
         _ title: String? = nil,
         subtitle: String? = nil,
+        eyebrow: String? = nil,
+        eyebrowSymbol: String? = nil,
         accent: Color = .green,
         framed: Bool = true,
         placement: CaptionPlacement = .top,
+        captionTopInset: CGFloat = 56,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.init(
             title,
             subtitle: subtitle,
+            eyebrow: eyebrow,
+            eyebrowSymbol: eyebrowSymbol,
             accent: accent,
             framed: framed,
             placement: placement,
+            captionTopInset: captionTopInset,
             background: { ShotCardDefaultBackground() },
             detail: { EmptyView() },
             content: content
@@ -407,18 +604,24 @@ public extension ShotCard where Detail == EmptyView {
     init(
         _ title: String? = nil,
         subtitle: String? = nil,
+        eyebrow: String? = nil,
+        eyebrowSymbol: String? = nil,
         accent: Color = .green,
         framed: Bool = true,
         placement: CaptionPlacement = .top,
+        captionTopInset: CGFloat = 56,
         @ViewBuilder background: @escaping () -> Background,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.init(
             title,
             subtitle: subtitle,
+            eyebrow: eyebrow,
+            eyebrowSymbol: eyebrowSymbol,
             accent: accent,
             framed: framed,
             placement: placement,
+            captionTopInset: captionTopInset,
             background: background,
             detail: { EmptyView() },
             content: content
@@ -431,18 +634,24 @@ public extension ShotCard where Background == ShotCardDefaultBackground {
     init(
         _ title: String? = nil,
         subtitle: String? = nil,
+        eyebrow: String? = nil,
+        eyebrowSymbol: String? = nil,
         accent: Color = .green,
         framed: Bool = true,
         placement: CaptionPlacement = .top,
+        captionTopInset: CGFloat = 56,
         @ViewBuilder detail: @escaping () -> Detail,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.init(
             title,
             subtitle: subtitle,
+            eyebrow: eyebrow,
+            eyebrowSymbol: eyebrowSymbol,
             accent: accent,
             framed: framed,
             placement: placement,
+            captionTopInset: captionTopInset,
             background: { ShotCardDefaultBackground() },
             detail: detail,
             content: content

@@ -26,3 +26,33 @@ jobs:
         # Swift Package Index's compatibility build fails at analysis. Catches a
         # macOS-only API leaking into a shared or example target.
         run: xcodebuild -scheme ShotKit-Package -destination 'generic/platform=iOS' -skipMacroValidation -skipPackagePluginValidation build
+
+      - name: Test (iOS Simulator)
+        # Building only proves the API exists on iOS. The composition and
+        # annotation layers are pure SwiftUI and are meant to render identically
+        # on both platforms, so they are asserted on both — otherwise an iOS
+        # regression surfaces in someone's screenshots rather than here.
+        #
+        # The simulator is discovered rather than named: runner images retire
+        # device names, and a hardcoded one turns into a red build that has
+        # nothing to do with the change that triggered it.
+        run: |
+          set -euo pipefail
+          udid=$(xcrun simctl list devices available | awk '
+            /^-- iOS /  { ios = 1; next }
+            /^-- /      { ios = 0 }
+            ios && /iPhone/ {
+              if (match($0, /\(([0-9A-F-]{36})\)/)) {
+                print substr($0, RSTART + 1, RLENGTH - 2)
+                exit
+              }
+            }')
+          if [ -z "$udid" ]; then
+            echo "No iOS simulator available on this runner." >&2
+            exit 1
+          fi
+          xcodebuild test \
+            -scheme ShotKit-Package \
+            -destination "id=$udid" \
+            -skipMacroValidation \
+            -skipPackagePluginValidation

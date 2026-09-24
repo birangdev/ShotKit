@@ -121,7 +121,9 @@ struct HomeScreen: View {
     }
 }
 
-private func coffeeIcon(_ name: String) -> String {
+/// Shared with the desktop scenes, so a drink is drawn with the same icon
+/// whichever platform's shot it appears in.
+func coffeeIcon(_ name: String) -> String {
     switch name {
     case "Ristretto": return "cup.and.saucer.fill"
     case "Espresso": return "mug.fill"

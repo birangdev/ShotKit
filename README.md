@@ -49,6 +49,9 @@ Regenerate it with `swift run ComparisonTool Examples/CafeApp/Screenshots`.
   reads as a menu-bar app rather than a floating panel.
 - **Highlights.** `.shotHighlight("Note")` rings one control and annotates it
   without moving anything around it.
+- **Callouts.** `.shotCalloutTarget("id")` plus `.shotCallouts([...])` explains a
+  control too small or too hemmed-in to carry a note beside it, drawing the note
+  outside the clipping container with a leader line back to the control.
 - **iPhone device frames.** Wrap iOS screens in `DeviceFrame` for a real notch,
   status bar, and bezel, so shots read as phone screenshots, not flat images.
 - **Customizable background.** `ShotCard` defaults to a dark gradient, but
@@ -65,6 +68,25 @@ Regenerate it with `swift run ComparisonTool Examples/CafeApp/Screenshots`.
   needs a window server / active window scene — run it from your app, or from a
   small executable that brings up `NSApplication` (see the example's
   `CafeExportTool`). A plain script with no app context won't render.
+
+### What runs where
+
+Composition and annotation are pure SwiftUI and behave identically on both
+platforms. Only the window-level capture is macOS-specific.
+
+| | macOS | iOS |
+|---|---|---|
+| `ShotCard`, captions, `ScaledContent`, `ShotBackground` | yes | yes |
+| `.shotHighlight` and callouts (`.shotCalloutTarget` / `.shotCallouts`) | yes | yes |
+| `DeviceFrame` (iPhone mockup) | yes | yes |
+| `WindowChrome`, `MenuBarFrame`, `DesktopFrame` | yes | compiles, but they draw macOS furniture |
+| `ShotKit.capturePNG` / `export` | `cacheDisplay` | `drawHierarchy` |
+| `CaptureMethod.windowServer` | composites materials | accepted and ignored |
+| `ShotKit.captureWindow`, `WindowSnapshot` | yes | not available |
+
+The annotation APIs are covered by tests that run on both platforms
+(`AnnotationRenderingTests`), so an iOS regression fails CI rather than turning
+up in someone's screenshots.
 
 ## Installation
 
@@ -230,9 +252,46 @@ SettingsRow()
 ```
 
 The ring and note are overlays, so nothing shifts. Inside a container that
-clips — a window frame, a scroll view — pass
-`style: HighlightStyle(notePlacement: .inside)` so the note is not cut off at
-the container's edge.
+clips — a window frame, a scroll view — pass `style: .withinBounds` so both the
+ring and the note stay within the highlighted view's bounds. Without it, a
+control that reaches its container's edge gets a ring sliced off by the frame,
+which reads as a rendering fault rather than as an annotation.
+
+### Explaining a control that has no room
+
+A ring plus a note works when the control has slack around it. A 30pt icon in a
+narrow popover has none, and a clipping container cuts off anything that
+reaches past its bounds. A **callout** splits the two apart: mark the control
+inside the container, and draw the ring, leader line, and note from outside it.
+
+```swift
+ShotCard("Pin what matters") {
+    MenuPopover {
+        PinButton()
+            .shotCalloutTarget("pin")      // marks it; draws nothing
+    }
+    .clipShape(RoundedRectangle(cornerRadius: 14))
+    .shotCallouts([                        // outside the clip
+        ShotCallout(
+            "pin",
+            "Pin a provider",
+            detail: "Keeps it in the menu bar, whatever else is running low.",
+            side: .bottom,
+            shape: .circle
+        )
+    ])
+}
+```
+
+Ordering matters twice over. Put `.shotCallouts` **outside** the clip, or the
+note is clipped along with everything else. Keep it **inside** `ShotCard`'s
+content, though: the card auto-scales what it is given, and a callout applied
+over the finished card resolves its anchors in the unscaled layout, so the ring
+lands away from the control it is meant to be ringing.
+
+`side` picks which way the leader line runs. For `.top` and `.bottom` the note
+is centred on the control and then kept within the container's width, so a
+control near an edge does not push its note off the canvas.
 
 ### Custom background
 
@@ -250,6 +309,85 @@ ShotCard("Fuel up", subtitle: "Track every cup", background: {
 
 Pass a plain `Color`, an `Image`, or any composed view — it fills the whole
 canvas behind the caption and framed content, same as the default gradient.
+
+### Native macOS windows and NavigationSplitView
+
+**macOS only.** For a split view that needs the app's native sidebar, toolbar,
+title bar, and materials, capture the window **before** composing the marketing
+card. The async native-window API needs macOS 14 or later.
+
+It never prompts, and by default it never fails for want of a permission.
+`NativeWindowCaptureMethod.automatic` uses ScreenCaptureKit when Screen
+Recording is already granted and falls back to the WindowServer otherwise —
+a process capturing its *own* windows needs no grant at all, which is what keeps
+unsigned development builds and CI working. Pass `.screenCaptureKit` to demand
+the modern API and get an error instead of the fallback, or `.windowServer` to
+skip it entirely. Both paths return the same bitmap.
+
+The closest match to your app is its existing visible window:
+
+```swift
+// On the main actor, after the app's view/data is ready:
+let snapshot = try await ShotKit.captureWindow(settingsWindow, scale: 2)
+```
+
+Alternatively, host your view in a temporary native window:
+
+```swift
+let snapshot = try await ShotKit.captureWindow(
+    configuration: NativeWindowConfiguration(
+        title: "My App — Settings",
+        contentSize: CGSize(width: 800, height: 520),
+        scale: 2,
+        appearance: NSAppearance(named: .darkAqua)
+    ),
+    configure: { window in
+        window.toolbarStyle = .unified
+        // Match any other window configuration your app needs here.
+    },
+    prepare: { window in
+        // Await app-specific fixture loading here, if needed.
+    }
+) {
+    SettingsView(model: .demo)
+}
+
+// Use this inside your ScreenshotScene.makeContent():
+ShotCard("Your headline", framed: false) {
+    snapshot
+}
+
+// Or save the native window alone:
+let png = try snapshot.pngData()
+```
+
+`contentSize` is the viewport size in points, excluding the native title bar.
+Scrolling content stays clipped to that viewport. The title bar is included in
+`snapshot.pointSize` and the PNG; the outside window shadow is excluded. The
+requested `scale` controls output pixels per point independently of screen scale.
+The snapshot is a fixed-size bitmap view, so `ShotCard` can scale it without
+changing the split view's column layout. Do not wrap it in `WindowChrome`, which
+draws a decorative frame, or add a second frame with `ShotCard(framed: true)`.
+
+Capturing an existing window preserves its configuration and does not activate
+or close it. The temporary-window overload briefly activates the app and makes
+its window key, then closes it and restores the prior visible key window even
+if preparation or capture fails. Run captures sequentially. Scene-level window
+customization is not inferred from a view: use the existing-window overload when
+your app relies on it. Neither overload captures below a scroll view's viewport.
+
+A standalone fixture exports native windows and marketing cards at two viewport
+sizes, plus legacy cards for comparison. Each run creates a new subfolder and
+does not overwrite existing images:
+
+```sh
+swift run NativeWindowExportTool /path/to/output --request-screen-recording
+```
+
+Only the sample tool's explicit `--request-screen-recording` flag requests OS
+permission. The test suite needs none: it verifies captured pixels and
+resolution through the WindowServer path, and additionally exercises
+ScreenCaptureKit when the grant happens to be present.
 
 ### Tips for the captured view
 
@@ -290,10 +428,12 @@ ShotKit capture of the real app views driven by fixture data. Two of them:
 
 | Menu popover | History window |
 | --- | --- |
-| ![StackGauge menu popover: a circular gauge, a toggle, and a linear progress bar, all captured intact](Examples/StackGauge/limits.png) | ![StackGauge history window: a Swift Charts bar chart and an activity heatmap in a tall window auto-fit to the canvas](Examples/StackGauge/history.png) |
+| ![StackGauge menu popover hanging from a menu bar on a desktop, beside a side caption and feature list: segmented control, pop-up button, progress bars and sparklines all captured intact](Examples/StackGauge/limits.png) | ![StackGauge history window captured as a real window: native title bar, segmented controls, pop-up buttons and a Swift Charts bar chart, auto-fit to the canvas](Examples/StackGauge/history.png) |
 
-The gauge, the toggle, the progress bar, and the chart are exactly the controls a
-rendered screenshot loses.
+The segmented controls, the pop-up buttons, the progress bars and the chart are
+exactly what a rendered screenshot loses. The left shot also uses `MenuBarFrame`
+inside `DesktopFrame` with a `.leading` caption; the right one is
+`ShotKit.captureWindow`, so the title bar is the app's own rather than drawn.
 
 ## Example
 
@@ -308,6 +448,18 @@ the file to copy from to see how to drive ShotKit: each screen is a full iPhone
 | Home | Styles | Size | Extras |
 | --- | --- | --- | --- |
 | ![Home](Examples/CafeApp/Screenshots/01-home.png) | ![Coffee styles](Examples/CafeApp/Screenshots/02-coffees.png) | ![Size](Examples/CafeApp/Screenshots/03-size.png) | ![Extras](Examples/CafeApp/Screenshots/04-extras.png) |
+
+The same module also builds the desktop compositions, so each one is a working
+reference rather than a description:
+
+| Callout | Menu bar on a desktop | Highlight + detail |
+| --- | --- | --- |
+| ![A window with one row called out: the note sits on open canvas above the window, with a leader line back to the ringed row](Examples/CafeApp/Screenshots/05-features.png) | ![A menu-bar popover hanging from a menu bar on a desktop screen](Examples/CafeApp/Screenshots/06-menubar.png) | ![A ringed row on the right, explained by a panel on the left in the same accent colour](Examples/CafeApp/Screenshots/07-selection.png) |
+
+`05` pairs `.shotCalloutTarget` with `.shotCallouts` outside `WindowChrome`'s
+clip, `06` puts `MenuBarFrame` inside `DesktopFrame`, and `07` rings a row with
+`.shotHighlight` and explains it from a panel beside the window, tied together
+by a shared accent.
 
 Regenerate the screenshots:
 
@@ -337,7 +489,8 @@ build this repo. See `Examples/CafeApp/README.md` for details.
 | `WindowChrome` | macOS window frame: title bar, traffic lights, optional title. Pair with `ShotCard(framed: false)`. |
 | `MenuBarFrame` | A menu bar with neighbouring glyphs, a highlighted status item, and the popover hanging beneath it. |
 | `CaptionPlacement` | `.top`, `.bottom`, `.leading`, `.trailing` — which edge `ShotCard`'s caption occupies. |
-| `.shotHighlight(_:edge:style:)` | Rings a view and adds a note, in an overlay so surrounding layout is untouched. |
+| `.shotHighlight(_:edge:style:)` | Rings a view and adds a note, in an overlay so surrounding layout is untouched. Use `style: .withinBounds` inside a clipping container. |
+| `.shotCalloutTarget(_:)` / `.shotCallouts(_:style:)` | Marks a control, then rings it and explains it from outside its clipping container, with a leader line back to it. |
 | `ScaledContent` / `ScaledLayout` | Scale a view while reserving its scaled size in layout (used by `ShotCard`; reusable). |
 
 ### `ScreenshotSpec`
